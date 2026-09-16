@@ -14,8 +14,16 @@ python3 -m PyInstaller --noconfirm --clean --windowed \
   --add-data "src/locales:locales" --paths src src/gui.py
 APP="dist/SoundFX Organizer.app"
 /bin/cp -R "dist/ai_worker" "$APP/Contents/Resources/ai_worker"
-/usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 5.0' "$APP/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 100' "$APP/Contents/Info.plist"
+set_plist_string() {
+  local key="$1" value="$2"
+  if /usr/libexec/PlistBuddy -c "Print :${key}" "$APP/Contents/Info.plist" >/dev/null 2>&1; then
+    /usr/libexec/PlistBuddy -c "Set :${key} ${value}" "$APP/Contents/Info.plist"
+  else
+    /usr/libexec/PlistBuddy -c "Add :${key} string ${value}" "$APP/Contents/Info.plist"
+  fi
+}
+set_plist_string CFBundleShortVersionString 5.0
+set_plist_string CFBundleVersion 100
 BIN="$APP/Contents/MacOS/SoundFX Organizer"
 /usr/bin/lipo -verify_arch "$ARCH" "$BIN"
 /usr/bin/lipo -verify_arch "$ARCH" "$APP/Contents/Resources/ai_worker/ai_worker"
