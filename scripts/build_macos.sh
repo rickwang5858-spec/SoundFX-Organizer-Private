@@ -5,7 +5,7 @@ if [ "$(uname -s)" != "Darwin" ]; then
 fi
 ARCH="$(uname -m)"
 case "$ARCH" in arm64|x86_64) ;; *) echo "Unsupported architecture: $ARCH" >&2; exit 2;; esac
-python3 -c 'import tkinter,PyInstaller; r=tkinter.Tk();r.withdraw();r.destroy()'
+python3 -c 'import tkinter,PyInstaller'
 python3 -m PyInstaller --noconfirm --clean --onedir \
   --name ai_worker --paths src --collect-all transformers --collect-all torch src/ai_worker.py
 python3 -m PyInstaller --noconfirm --clean --windowed \
