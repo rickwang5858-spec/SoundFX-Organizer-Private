@@ -51,6 +51,7 @@ class Regression(unittest.TestCase):
                 r=classify(p); target=e.destination(p,r)
                 self.assertEqual(target.name,'City_Street_Traffic_001.wav')
                 target.parent.mkdir(parents=True); target.write_bytes(b'x')
-                self.assertEqual(e.destination(target,classify(target.relative_to(root))).name,target.name)
+                relative=target.resolve(strict=False).relative_to(root.resolve(strict=False))
+                self.assertEqual(e.destination(target,classify(relative)).name,target.name)
             finally:e.close()
 if __name__=='__main__':unittest.main()
