@@ -33,6 +33,13 @@ class FinalSafety(unittest.TestCase):
         self.assertIn('Add :${key} string ${value}',build)
         self.assertIn('set_plist_string CFBundleShortVersionString 5.0',build)
         self.assertIn('set_plist_string CFBundleVersion 100',build)
+    def test_lipo_receives_file_before_verify_arch(self):
+        root=Path(__file__).parents[1]
+        build=(root/'scripts/build_macos.sh').read_text(encoding='utf-8')
+        verify=(root/'scripts/verify_delivery.sh').read_text(encoding='utf-8')
+        self.assertIn('/usr/bin/lipo "$BIN" -verify_arch "$ARCH"',build)
+        self.assertIn('/usr/bin/lipo "$APP/Contents/MacOS/SoundFX Organizer" -verify_arch "$EXPECTED_ARCH"',verify)
+        self.assertNotIn('/usr/bin/lipo -verify_arch',build+verify)
     def test_ci_preflights_native_architecture_dependencies_and_disk(self):
         workflow=(Path(__file__).parents[1]/'.github/workflows/macos-final.yml').read_text(encoding='utf-8')
         for required in ('macos-15-intel','actions/checkout@v5','actions/setup-python@v6',
