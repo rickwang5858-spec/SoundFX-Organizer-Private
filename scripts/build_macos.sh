@@ -25,8 +25,8 @@ set_plist_string() {
 set_plist_string CFBundleShortVersionString 5.0
 set_plist_string CFBundleVersion 100
 BIN="$APP/Contents/MacOS/SoundFX Organizer"
-/usr/bin/lipo -verify_arch "$ARCH" "$BIN"
-/usr/bin/lipo -verify_arch "$ARCH" "$APP/Contents/Resources/ai_worker/ai_worker"
+/usr/bin/lipo "$BIN" -verify_arch "$ARCH"
+/usr/bin/lipo "$APP/Contents/Resources/ai_worker/ai_worker" -verify_arch "$ARCH"
 /usr/bin/codesign --force --deep --options runtime --sign - "$APP"
 /usr/bin/codesign --verify --deep --strict "$APP"
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/SoundFX_Organizer_5.0_macOS_${ARCH}.zip"
