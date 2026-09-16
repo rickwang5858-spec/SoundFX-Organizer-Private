@@ -46,7 +46,7 @@ class FolderLanguage(unittest.TestCase):
                 result=classify(audio);first=e.destination(audio,result)
                 second=e.destination(audio,result,{str(first).casefold()})
                 localized=root/'自然與天氣 Nature & Weather'/'風 Wind'
-                self.assertEqual(second.parent,localized)
+                self.assertEqual(second.parent,localized.resolve(strict=False))
                 self.assertTrue(second.name.endswith('_002.wav'))
             finally:e.close()
 
