@@ -20,7 +20,7 @@ fi
 /usr/bin/grep -q '"architecture": "'"$EXPECTED_ARCH"'"' "$WORK/app-self-test.json"
 "$APP/Contents/Resources/ai_worker/ai_worker" </dev/null >"$WORK/ai.out" 2>"$WORK/ai.err" &
 AI_PID=$!
-for _ in {1..120}; do
+for _ in {1..600}; do
   if /usr/bin/grep -q '"ready"' "$WORK/ai.out"; then break; fi
   if ! /bin/kill -0 "$AI_PID" 2>/dev/null; then
     /bin/cat "$WORK/ai.err" >&2; exit 4

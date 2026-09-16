@@ -15,6 +15,13 @@ class FinalSafety(unittest.TestCase):
         verify=(Path(__file__).parents[1]/'scripts/verify_delivery.sh').read_text(encoding='utf-8')
         self.assertIn("'--release-self-test' in sys.argv",gui)
         self.assertIn('--release-self-test',verify)
+    def test_ci_preflights_native_architecture_dependencies_and_disk(self):
+        workflow=(Path(__file__).parents[1]/'.github/workflows/macos-final.yml').read_text(encoding='utf-8')
+        for required in ('macos-15-intel','actions/checkout@v5','actions/setup-python@v6',
+                         'runner architecture mismatch','insufficient free disk',
+                         'import torch, transformers, numpy, soundfile, scipy, PyInstaller'):
+            self.assertIn(required,workflow)
+        self.assertIn('- runner: macos-15\n',workflow)
     def test_appledouble_is_not_an_attachment_and_is_preserved(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);audio=root/'wind.wav';audio.write_bytes(b'audio')
