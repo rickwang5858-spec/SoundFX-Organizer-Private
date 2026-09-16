@@ -27,6 +27,12 @@ class FinalSafety(unittest.TestCase):
         verify=(Path(__file__).parents[1]/'scripts/verify_delivery.sh').read_text(encoding='utf-8')
         self.assertIn("'--release-self-test' in sys.argv",gui)
         self.assertIn('--release-self-test',verify)
+    def test_build_adds_missing_bundle_version_keys(self):
+        build=(Path(__file__).parents[1]/'scripts/build_macos.sh').read_text(encoding='utf-8')
+        self.assertIn('Print :${key}',build)
+        self.assertIn('Add :${key} string ${value}',build)
+        self.assertIn('set_plist_string CFBundleShortVersionString 5.0',build)
+        self.assertIn('set_plist_string CFBundleVersion 100',build)
     def test_ci_preflights_native_architecture_dependencies_and_disk(self):
         workflow=(Path(__file__).parents[1]/'.github/workflows/macos-final.yml').read_text(encoding='utf-8')
         for required in ('macos-15-intel','actions/checkout@v5','actions/setup-python@v6',
