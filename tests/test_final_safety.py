@@ -4,6 +4,18 @@ from unittest.mock import patch
 from engine import Engine
 
 class FinalSafety(unittest.TestCase):
+    def test_resolved_root_accepts_equivalent_alias_path_but_rejects_escape(self):
+        with tempfile.TemporaryDirectory() as d:
+            base=Path(d);real=base/'private'/'library';real.mkdir(parents=True)
+            alias=base/'library-alias';alias.symlink_to(real,target_is_directory=True)
+            audio=alias/'door open.wav';audio.write_bytes(b'audio')
+            e=Engine(alias,folder_style='en')
+            try:
+                self.assertEqual(str(e._relative(audio)),'door open.wav')
+                with self.assertRaises(ValueError):e._relative(base/'outside.wav')
+                self.assertEqual(e.fast()['moved'],1)
+                self.assertTrue((real/'Foley & Household'/'Doors & Windows').is_dir())
+            finally:e.close()
     def test_release_audio_stage_never_creates_venv_or_installs_packages(self):
         gui=(Path(__file__).parents[1]/'src/gui.py').read_text(encoding='utf-8')
         analyzer=gui[gui.index('    def bundled_ai_worker'):gui.index('    def work(')]
