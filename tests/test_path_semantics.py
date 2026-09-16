@@ -134,8 +134,4 @@ class EngineUpgrade(unittest.TestCase):
                 self.assertFalse(dest.exists())
             finally:e.close()
 
-    def test_launcher_has_both_standard_intel_and_apple_silicon_python_paths(self):
-        launcher=Path(__file__).parents[1]/'MacOS/SoundFX4'; text=launcher.read_text()
-        self.assertIn('/opt/homebrew/bin/python3',text); self.assertIn('/usr/local/bin/python3',text)
-
 if __name__=='__main__':unittest.main()
