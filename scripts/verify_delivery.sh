@@ -9,8 +9,8 @@ APP="$WORK/SoundFX Organizer.app"
 test -d "$APP"
 test -x "$APP/Contents/MacOS/SoundFX Organizer"
 test -x "$APP/Contents/Resources/ai_worker/ai_worker"
-/usr/bin/lipo -verify_arch "$EXPECTED_ARCH" "$APP/Contents/MacOS/SoundFX Organizer"
-/usr/bin/lipo -verify_arch "$EXPECTED_ARCH" "$APP/Contents/Resources/ai_worker/ai_worker"
+/usr/bin/lipo "$APP/Contents/MacOS/SoundFX Organizer" -verify_arch "$EXPECTED_ARCH"
+/usr/bin/lipo "$APP/Contents/Resources/ai_worker/ai_worker" -verify_arch "$EXPECTED_ARCH"
 /usr/bin/codesign --verify --deep --strict "$APP"
 if /usr/bin/zipinfo -1 "$ZIP" | /usr/bin/grep -Eqi 'OpenSource|CONTRIBUTING|tests?/|\.py$'; then
   echo "Developer files leaked into final archive." >&2; exit 3

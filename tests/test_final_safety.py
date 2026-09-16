@@ -4,6 +4,18 @@ from unittest.mock import patch
 from engine import Engine
 
 class FinalSafety(unittest.TestCase):
+    def test_resolved_root_accepts_equivalent_alias_path_but_rejects_escape(self):
+        with tempfile.TemporaryDirectory() as d:
+            base=Path(d);real=base/'private'/'library';real.mkdir(parents=True)
+            alias=base/'library-alias';alias.symlink_to(real,target_is_directory=True)
+            audio=alias/'door open.wav';audio.write_bytes(b'audio')
+            e=Engine(alias,folder_style='en')
+            try:
+                self.assertEqual(str(e._relative(audio)),'door open.wav')
+                with self.assertRaises(ValueError):e._relative(base/'outside.wav')
+                self.assertEqual(e.fast()['moved'],1)
+                self.assertTrue((real/'Foley & Household'/'Doors & Windows').is_dir())
+            finally:e.close()
     def test_release_audio_stage_never_creates_venv_or_installs_packages(self):
         gui=(Path(__file__).parents[1]/'src/gui.py').read_text(encoding='utf-8')
         analyzer=gui[gui.index('    def bundled_ai_worker'):gui.index('    def work(')]
@@ -15,6 +27,19 @@ class FinalSafety(unittest.TestCase):
         verify=(Path(__file__).parents[1]/'scripts/verify_delivery.sh').read_text(encoding='utf-8')
         self.assertIn("'--release-self-test' in sys.argv",gui)
         self.assertIn('--release-self-test',verify)
+    def test_build_adds_missing_bundle_version_keys(self):
+        build=(Path(__file__).parents[1]/'scripts/build_macos.sh').read_text(encoding='utf-8')
+        self.assertIn('Print :${key}',build)
+        self.assertIn('Add :${key} string ${value}',build)
+        self.assertIn('set_plist_string CFBundleShortVersionString 5.0',build)
+        self.assertIn('set_plist_string CFBundleVersion 100',build)
+    def test_lipo_receives_file_before_verify_arch(self):
+        root=Path(__file__).parents[1]
+        build=(root/'scripts/build_macos.sh').read_text(encoding='utf-8')
+        verify=(root/'scripts/verify_delivery.sh').read_text(encoding='utf-8')
+        self.assertIn('/usr/bin/lipo "$BIN" -verify_arch "$ARCH"',build)
+        self.assertIn('/usr/bin/lipo "$APP/Contents/MacOS/SoundFX Organizer" -verify_arch "$EXPECTED_ARCH"',verify)
+        self.assertNotIn('/usr/bin/lipo -verify_arch',build+verify)
     def test_ci_preflights_native_architecture_dependencies_and_disk(self):
         workflow=(Path(__file__).parents[1]/'.github/workflows/macos-final.yml').read_text(encoding='utf-8')
         for required in ('macos-15-intel','actions/checkout@v5','actions/setup-python@v6',

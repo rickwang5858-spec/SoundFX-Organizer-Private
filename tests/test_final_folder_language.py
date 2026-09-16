@@ -38,6 +38,18 @@ class FolderLanguage(unittest.TestCase):
                 self.assertEqual(e.fast()['moved'],0)
             finally:e.close()
 
+    def test_name_collision_stays_in_selected_localized_category(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);audio=root/'wind.wav';audio.write_bytes(b'wind')
+            e=Engine(root,folder_style='bilingual')
+            try:
+                result=classify(audio);first=e.destination(audio,result)
+                second=e.destination(audio,result,{str(first).casefold()})
+                localized=root/'自然與天氣 Nature & Weather'/'風 Wind'
+                self.assertEqual(second.parent,localized.resolve(strict=False))
+                self.assertTrue(second.name.endswith('_002.wav'))
+            finally:e.close()
+
     def test_unproven_similar_folder_is_preserved(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);p=root/'05 Foley & Household'/'manual.txt';p.parent.mkdir();p.write_text('user')
