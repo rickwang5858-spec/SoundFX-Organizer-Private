@@ -18,6 +18,7 @@ class FinalSafety(unittest.TestCase):
     def test_ci_preflights_native_architecture_dependencies_and_disk(self):
         workflow=(Path(__file__).parents[1]/'.github/workflows/macos-final.yml').read_text(encoding='utf-8')
         for required in ('macos-15-intel','actions/checkout@v5','actions/setup-python@v6',
+                         'cache-dependency-path:', 'requirements-dev.txt', 'requirements-ai.txt',
                          'runner architecture mismatch','insufficient free disk',
                          'import torch, transformers, numpy, soundfile, scipy, PyInstaller'):
             self.assertIn(required,workflow)
