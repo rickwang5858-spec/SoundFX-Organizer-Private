@@ -40,7 +40,7 @@ class FinalSafety(unittest.TestCase):
         self.assertIn('Print :${key}',build)
         self.assertIn('Add :${key} string ${value}',build)
         self.assertIn('set_plist_string CFBundleShortVersionString 5.0',build)
-        self.assertIn('set_plist_string CFBundleVersion 101',build)
+        self.assertIn('set_plist_string CFBundleVersion 102',build)
     def test_lipo_receives_file_before_verify_arch(self):
         root=Path(__file__).parents[1]
         build=(root/'scripts/build_macos.sh').read_text(encoding='utf-8')
@@ -58,12 +58,12 @@ class FinalSafety(unittest.TestCase):
             self.assertIn('ai_worker|audio_ai|categories|custom_rules|engine|gui|i18n|legacy|low_quality|metadata_text|taxonomy',script)
     def test_ci_preflights_native_architecture_dependencies_and_disk(self):
         workflow=(Path(__file__).parents[1]/'.github/workflows/macos-final.yml').read_text(encoding='utf-8')
-        for required in ('runs-on: macos-15','TARGET_ARCH: arm64','actions/checkout@v5','actions/setup-python@v6',
+        for required in ('runs-on: macos-26','TARGET_ARCH: arm64','actions/checkout@v5','actions/setup-python@v6',
                          'cache-dependency-path:', 'requirements-dev.txt', 'requirements-ai.txt',
                          'runner architecture mismatch','insufficient free disk',
                          'import torch, transformers, numpy, soundfile, scipy, PyInstaller'):
             self.assertIn(required,workflow)
-        self.assertNotIn('macos-15-intel',workflow)
+        self.assertNotIn('macos-15-intel',workflow)\n        self.assertNotIn('--options runtime', (Path(__file__).parents[1]/'scripts/build_macos.sh').read_text(encoding='utf-8'))
     def test_appledouble_is_not_an_attachment_and_is_preserved(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);audio=root/'wind.wav';audio.write_bytes(b'audio')
