@@ -63,7 +63,8 @@ class FinalSafety(unittest.TestCase):
                          'runner architecture mismatch','insufficient free disk',
                          'import torch, transformers, numpy, soundfile, scipy, PyInstaller'):
             self.assertIn(required,workflow)
-        self.assertNotIn('macos-15-intel',workflow)\n        self.assertNotIn('--options runtime', (Path(__file__).parents[1]/'scripts/build_macos.sh').read_text(encoding='utf-8'))
+        self.assertNotIn('macos-15-intel',workflow)
+        self.assertNotIn('--options runtime', (Path(__file__).parents[1]/'scripts/build_macos.sh').read_text(encoding='utf-8'))
     def test_appledouble_is_not_an_attachment_and_is_preserved(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);audio=root/'wind.wav';audio.write_bytes(b'audio')
