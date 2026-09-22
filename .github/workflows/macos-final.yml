@@ -3,7 +3,7 @@ name: macOS Final Validation
 on:
   workflow_dispatch:
   push:
-    branches: [main, final-macos-path-and-build-fix]
+    branches: [main]
 
 permissions:
   contents: read
