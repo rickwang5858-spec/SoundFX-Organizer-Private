@@ -9,11 +9,19 @@ APP="$WORK/SoundFX Organizer.app"
 test -d "$APP"
 test -x "$APP/Contents/MacOS/SoundFX Organizer"
 test -x "$APP/Contents/Resources/ai_worker/ai_worker"
-/usr/bin/lipo -verify_arch "$EXPECTED_ARCH" "$APP/Contents/MacOS/SoundFX Organizer"
-/usr/bin/lipo -verify_arch "$EXPECTED_ARCH" "$APP/Contents/Resources/ai_worker/ai_worker"
+/usr/bin/lipo "$APP/Contents/MacOS/SoundFX Organizer" -verify_arch "$EXPECTED_ARCH"
+/usr/bin/lipo "$APP/Contents/Resources/ai_worker/ai_worker" -verify_arch "$EXPECTED_ARCH"
 /usr/bin/codesign --verify --deep --strict "$APP"
-if /usr/bin/zipinfo -1 "$ZIP" | /usr/bin/grep -Eqi 'OpenSource|CONTRIBUTING|tests?/|\.py$'; then
-  echo "Developer files leaked into final archive." >&2; exit 3
+archive_has_project_sources() {
+  /usr/bin/zipinfo -1 "$1" | /usr/bin/awk '
+    !/^SoundFX Organizer\.app(\/|$)/ && !/^__MACOSX\/SoundFX Organizer\.app(\/|$)/ { bad=1 }
+    /Contents\/Resources\/(OpenSource|src|tests|scripts|\.github)(\/|$)/ { bad=1 }
+    /Contents\/Resources\/(ai_worker|audio_ai|categories|custom_rules|engine|gui|i18n|legacy|low_quality|metadata_text|taxonomy)\.py$/ { bad=1 }
+    END { exit bad ? 0 : 1 }
+  '
+}
+if archive_has_project_sources "$ZIP"; then
+  echo "Project source or developer files leaked into final archive." >&2; exit 3
 fi
 "$APP/Contents/MacOS/SoundFX Organizer" --release-self-test >"$WORK/app-self-test.json"
 /usr/bin/grep -q '"python_frozen": true' "$WORK/app-self-test.json"

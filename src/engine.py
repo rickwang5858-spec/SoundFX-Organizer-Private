@@ -36,6 +36,14 @@ class Engine:
         self.device=self.root.stat().st_dev
         self.custom=CustomRules(self.ctl/'custom_rules.json')
         self._recover_incomplete_moves()
+    def _relative(self,p):
+        """Return a safe library-relative path across macOS path aliases.
+
+        macOS exposes some locations through aliases such as /var -> /private/var.
+        Resolve both the selected root and incoming path before containment checks.
+        Paths that actually escape the library still raise ValueError.
+        """
+        return Path(p).resolve(strict=False).relative_to(self.root)
     def _recover_incomplete_moves(self):
         """Resolve journal rows left before the source file was removed."""
         rows=self.db.execute("SELECT id,src,dst,sig,status FROM moves WHERE status IN ('moving','failed') ORDER BY id").fetchall()
@@ -120,7 +128,7 @@ class Engine:
                 sig=signature(p)
                 if str(p) in protected or ':'.join(sig.split(':')[:2]) in prefixes:
                     # Review items are explicitly eligible for optional re-analysis.
-                    if not any(x in ('_待確認','_Needs Review','Unclassified') for x in p.relative_to(self.root).parts):
+                    if not any(x in ('_待確認','_Needs Review','Unclassified') for x in self._relative(p).parts):
                         self.db.execute('INSERT OR REPLACE INTO seen VALUES(?,?)',(sig,str(p)))
             self.db.execute("INSERT INTO meta VALUES('legacy_import','1')"); self.db.commit()
         current={r[0] for r in self.db.execute('SELECT sig FROM file_rules WHERE rule_version=?',(RULE_VERSION,))}; pending=[]; self.skipped=0
@@ -133,7 +141,7 @@ class Engine:
         return pending
     def classify_fast(self,p,readme_text=''):
         """Weighted text sources. Never decodes audio samples."""
-        rel=p.relative_to(self.root)
+        rel=self._relative(p)
         custom=self.custom.classify(rel)
         if custom:return custom
         direct=classify(rel)
@@ -154,7 +162,7 @@ class Engine:
                 return hit
         return None
     def _package_key(self,p):
-        parts=p.relative_to(self.root).parts[:-1]
+        parts=self._relative(p).parts[:-1]
         for part in parts:
             if not is_category_root(part) and part not in CANONICAL_ROOTS and normal(part) not in ('0 hollywood sound fx','hollywood sound fx'):
                 return part
@@ -192,13 +200,13 @@ class Engine:
                     'reason_code':'package_consensus','rule_version':RULE_VERSION}
         return rows
     def destination(self,p,result,reserved=None):
-        reserved=reserved or set(); cat=result['cat']; stem=standardized_stem(p.relative_to(self.root),result)
+        reserved=reserved or set(); cat=result['cat']; stem=standardized_stem(self._relative(p),result)
         while len(stem.encode('utf-8'))>210: stem=stem[:-1]
         dest=self.root/render_category(cat,self.folder_style)/(stem+p.suffix.lower())
         if self.root not in dest.resolve().parents: raise ValueError('分類路徑不安全')
         n=1
         while dest!=p and (dest.exists() or dest.is_symlink() or str(dest).casefold() in reserved):
-            n+=1; dest=self.root/cat/(stem+'_%03d'%n+p.suffix.lower())
+            n+=1; dest=self.root/render_category(cat,self.folder_style)/(stem+'_%03d'%n+p.suffix.lower())
         return dest
     def _mark_current(self,p):
         sig=signature(p)
@@ -276,7 +284,7 @@ class Engine:
         value=re.sub(r'[^A-Za-z0-9 _.-]+','_',value).strip(' ._-')
         return value[:100] or 'Source_Package'
     def attachment_destination(self,p,reserved=None):
-        reserved=reserved or set(); parts=p.relative_to(self.root).parts[:-1]; package='Root Files'
+        reserved=reserved or set(); parts=self._relative(p).parts[:-1]; package='Root Files'
         for part in parts:
             n=normal(part)
             if is_category_root(part) or part in CANONICAL_ROOTS or n in ('0 hollywood sound fx','hollywood sound fx') or is_generic(part):continue
@@ -373,7 +381,7 @@ class Engine:
             self.checkpoint()
             if signature(p) in current:
                 self.emit('progress',i+1,len(files),p.name); continue
-            r=classify(p.relative_to(self.root))
+            r=classify(self._relative(p))
             if r:
                 dest=self.destination(p,r,reserved)
                 if p!=dest:
@@ -396,7 +404,7 @@ class Engine:
         batch='quality-'+uuid.uuid4().hex; moved=0
         for i,row in enumerate(rows):
             self.checkpoint(); p=Path(row['remove'])
-            dest=self.ctl/'LowQuality_Quarantine'/batch/p.relative_to(self.root)
+            dest=self.ctl/'LowQuality_Quarantine'/batch/self._relative(p)
             self.move(p,{'cat':'','label':''},batch,expected=dest,classified=False); moved+=1
             self.emit('progress',i+1,len(rows),p.name)
         self.export(); return moved
