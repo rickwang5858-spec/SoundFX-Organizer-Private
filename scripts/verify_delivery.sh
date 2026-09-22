@@ -37,3 +37,21 @@ for _ in {1..600}; do
 done
 /bin/kill "$AI_PID" 2>/dev/null || true
 /usr/bin/grep -q '"ready"' "$WORK/ai.out"
+
+# Launch through LaunchServices, create a real Tk window, and require proof that
+# it became viewable. This catches windowed apps that pass CLI self-tests but
+# silently exit when opened from Finder.
+GUI_MARKER="$WORK/gui-smoke.json"
+/usr/bin/open -n "$APP" --args --gui-smoke-test "$GUI_MARKER"
+for _ in {1..60}; do
+  test -s "$GUI_MARKER" && break
+  /bin/sleep 1
+done
+test -s "$GUI_MARKER"
+python3 - "$GUI_MARKER" <<'PY'
+import json, pathlib, sys
+result=json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert result["visible"] is True, result
+assert result["width"] >= 980 and result["height"] >= 700, result
+print({"gui_smoke": "passed", **result})
+PY
