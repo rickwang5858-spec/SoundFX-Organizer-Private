@@ -355,9 +355,65 @@ def release_self_test():
     if not checks['locale_en'] or not checks['locale_zh']:raise RuntimeError('locale self-test failed')
     print(json.dumps(checks,ensure_ascii=False,sort_keys=True),flush=True)
 
+def startup_log(message):
+    """Persist GUI startup state because windowed macOS apps have no console."""
+    base=Path.home()/'Library/Logs/SoundFX Organizer'
+    try:
+        base.mkdir(parents=True,exist_ok=True)
+        with (base/'startup.log').open('a',encoding='utf-8') as log:
+            log.write(time.strftime('%Y-%m-%d %H:%M:%S ') + message + '\n')
+    except OSError:
+        pass
+
+def show_startup_error(details):
+    startup_log(details)
+    message='SoundFX Organizer 無法開啟。錯誤紀錄已存到「資源庫/Logs/SoundFX Organizer/startup.log」。'
+    try:
+        subprocess.run(['/usr/bin/osascript','-e','display dialog '+json.dumps(message)+' with title "SoundFX Organizer" buttons {"好"} default button "好" with icon stop'],timeout=15,check=False)
+    except Exception:
+        pass
+
+def bring_to_front(root):
+    """Make a Finder-launched Tk window visible on modern macOS."""
+    if not root.winfo_exists(): return
+    root.deiconify(); root.lift()
+    try: root.attributes('-topmost',True)
+    except tk.TclError: pass
+    def release_topmost():
+        if not root.winfo_exists(): return
+        try: root.attributes('-topmost',False)
+        except tk.TclError: pass
+        root.lift(); root.focus_force()
+    root.after(700,release_topmost)
+
+def run_gui(smoke_marker=None):
+    startup_log('launch begin; arch=%s frozen=%s'%(platform.machine(),bool(getattr(sys,'frozen',False))))
+    root=tk.Tk(); root.withdraw()
+    App(root)
+    root.update_idletasks()
+    width=max(root.winfo_width(),1120); height=max(root.winfo_height(),780)
+    x=max(0,(root.winfo_screenwidth()-width)//2); y=max(0,(root.winfo_screenheight()-height)//2)
+    root.geometry('%dx%d+%d+%d'%(width,height,x,y))
+    bring_to_front(root); root.update_idletasks(); root.update()
+    startup_log('main window visible; tk=%s size=%dx%d'%(root.tk.call('info','patchlevel'),root.winfo_width(),root.winfo_height()))
+    if smoke_marker:
+        Path(smoke_marker).write_text(json.dumps({'visible':bool(root.winfo_viewable()),'width':root.winfo_width(),'height':root.winfo_height(),'arch':platform.machine()}),encoding='utf-8')
+        root.after(1800,root.destroy)
+    root.mainloop()
+    startup_log('normal exit')
+
 if __name__=='__main__' and '--release-self-test' in sys.argv:
     release_self_test()
 elif __name__=='__main__':
-    try: os.nice(5)
-    except OSError: pass
-    root=tk.Tk(); App(root); root.mainloop()
+    try:
+        try: os.nice(5)
+        except OSError: pass
+        marker=None
+        if '--gui-smoke-test' in sys.argv:
+            i=sys.argv.index('--gui-smoke-test')
+            marker=sys.argv[i+1] if i+1<len(sys.argv) else str(Path.home()/'SoundFX_GUI_Smoke.json')
+        run_gui(marker)
+    except BaseException:
+        details=traceback.format_exc()
+        show_startup_error(details)
+        if '--gui-smoke-test' in sys.argv: raise
