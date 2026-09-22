@@ -27,12 +27,20 @@ class FinalSafety(unittest.TestCase):
         verify=(Path(__file__).parents[1]/'scripts/verify_delivery.sh').read_text(encoding='utf-8')
         self.assertIn("'--release-self-test' in sys.argv",gui)
         self.assertIn('--release-self-test',verify)
+    def test_delivery_requires_visible_finder_launched_gui(self):
+        gui=(Path(__file__).parents[1]/'src/gui.py').read_text(encoding='utf-8')
+        verify=(Path(__file__).parents[1]/'scripts/verify_delivery.sh').read_text(encoding='utf-8')
+        self.assertIn('--gui-smoke-test',gui)
+        self.assertIn('/usr/bin/open -n "$APP" --args --gui-smoke-test',verify)
+        self.assertIn('result["visible"] is True',verify)
+        self.assertIn('show_startup_error',gui)
+
     def test_build_adds_missing_bundle_version_keys(self):
         build=(Path(__file__).parents[1]/'scripts/build_macos.sh').read_text(encoding='utf-8')
         self.assertIn('Print :${key}',build)
         self.assertIn('Add :${key} string ${value}',build)
         self.assertIn('set_plist_string CFBundleShortVersionString 5.0',build)
-        self.assertIn('set_plist_string CFBundleVersion 100',build)
+        self.assertIn('set_plist_string CFBundleVersion 101',build)
     def test_lipo_receives_file_before_verify_arch(self):
         root=Path(__file__).parents[1]
         build=(root/'scripts/build_macos.sh').read_text(encoding='utf-8')
@@ -50,12 +58,12 @@ class FinalSafety(unittest.TestCase):
             self.assertIn('ai_worker|audio_ai|categories|custom_rules|engine|gui|i18n|legacy|low_quality|metadata_text|taxonomy',script)
     def test_ci_preflights_native_architecture_dependencies_and_disk(self):
         workflow=(Path(__file__).parents[1]/'.github/workflows/macos-final.yml').read_text(encoding='utf-8')
-        for required in ('macos-15-intel','actions/checkout@v5','actions/setup-python@v6',
+        for required in ('runs-on: macos-15','TARGET_ARCH: arm64','actions/checkout@v5','actions/setup-python@v6',
                          'cache-dependency-path:', 'requirements-dev.txt', 'requirements-ai.txt',
                          'runner architecture mismatch','insufficient free disk',
                          'import torch, transformers, numpy, soundfile, scipy, PyInstaller'):
             self.assertIn(required,workflow)
-        self.assertIn('- runner: macos-15\n',workflow)
+        self.assertNotIn('macos-15-intel',workflow)
     def test_appledouble_is_not_an_attachment_and_is_preserved(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);audio=root/'wind.wav';audio.write_bytes(b'audio')

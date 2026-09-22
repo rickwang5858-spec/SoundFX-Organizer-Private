@@ -3,7 +3,7 @@ name: macOS Final Validation
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, m1-final-gui-fix]
 
 permissions:
   contents: read
@@ -14,15 +14,9 @@ concurrency:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15-intel
-            arch: x86_64
-          - runner: macos-15
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-15
+    env:
+      TARGET_ARCH: arm64
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
@@ -36,12 +30,10 @@ jobs:
       - name: Install build dependencies
         run: python -m pip install -r requirements-dev.txt -r requirements-ai.txt
       - name: Verify runner architecture and native dependencies
-        env:
-          EXPECTED_ARCH: ${{ matrix.arch }}
         run: |
           python - <<'PY'
           import os, platform, shutil
-          expected=os.environ['EXPECTED_ARCH']
+          expected=os.environ['TARGET_ARCH']
           actual=platform.machine()
           assert actual == expected, f'runner architecture mismatch: expected {expected}, got {actual}'
           free=shutil.disk_usage('.').free
@@ -60,10 +52,10 @@ jobs:
         run: bash scripts/build_macos.sh
       - name: Verify delivered ZIP
         env:
-          EXPECTED_ARCH: ${{ matrix.arch }}
-        run: bash scripts/verify_delivery.sh "dist/SoundFX_Organizer_5.0_macOS_${EXPECTED_ARCH}.zip"
+          EXPECTED_ARCH: arm64
+        run: bash scripts/verify_delivery.sh "dist/SoundFX_Organizer_5.0.1_M1_macOS_arm64.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: SoundFX-Organizer-5.0-${{ matrix.arch }}
-          path: dist/SoundFX_Organizer_5.0_macOS_${{ matrix.arch }}.zip
+          name: SoundFX-Organizer-5.0.1-M1-Final
+          path: dist/SoundFX_Organizer_5.0.1_M1_macOS_arm64.zip
           if-no-files-found: error
