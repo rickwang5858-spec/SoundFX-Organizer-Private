@@ -40,6 +40,14 @@ class FinalSafety(unittest.TestCase):
         self.assertIn('/usr/bin/lipo "$BIN" -verify_arch "$ARCH"',build)
         self.assertIn('/usr/bin/lipo "$APP/Contents/MacOS/SoundFX Organizer" -verify_arch "$EXPECTED_ARCH"',verify)
         self.assertNotIn('/usr/bin/lipo -verify_arch',build+verify)
+    def test_archive_leak_scan_allows_bundled_dependency_sources_only(self):
+        root=Path(__file__).parents[1]
+        for name in ('build_macos.sh','verify_delivery.sh'):
+            script=(root/'scripts'/name).read_text(encoding='utf-8')
+            self.assertNotIn("OpenSource|CONTRIBUTING|tests?/|\\\\.py$",script)
+            self.assertIn('archive_has_project_sources',script)
+            self.assertIn('Contents\\/Resources\\/(OpenSource|src|tests|scripts|\\.github)',script)
+            self.assertIn('ai_worker|audio_ai|categories|custom_rules|engine|gui|i18n|legacy|low_quality|metadata_text|taxonomy',script)
     def test_ci_preflights_native_architecture_dependencies_and_disk(self):
         workflow=(Path(__file__).parents[1]/'.github/workflows/macos-final.yml').read_text(encoding='utf-8')
         for required in ('macos-15-intel','actions/checkout@v5','actions/setup-python@v6',
