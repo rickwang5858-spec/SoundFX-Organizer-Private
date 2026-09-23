@@ -57,10 +57,10 @@ class IncrementalIntake(unittest.TestCase):
             root=Path(td);pending=root/'123.wav';pending.write_bytes(b'ambiguous')
             e=Engine(root,folder_style='en')
             try:
-                first=e.fast();self.assertEqual(first['pending'],[str(pending)]);self.assertEqual(first['new_audio_found'],1)
+                first=e.fast();self.assertEqual([Path(p).resolve() for p in first['pending']],[pending.resolve()]);self.assertEqual(first['new_audio_found'],1)
                 os.utime(pending,None)
                 second=e.fast();self.assertEqual(second['moved'],0);self.assertEqual(second['new_audio_found'],0)
-                self.assertEqual(second['pending'],[str(pending)]);self.assertTrue(pending.exists())
+                self.assertEqual([Path(p).resolve() for p in second['pending']],[pending.resolve()]);self.assertTrue(pending.exists())
             finally:e.close()
 
     def test_same_content_reintroduced_is_skipped_and_logged(self):
@@ -72,7 +72,7 @@ class IncrementalIntake(unittest.TestCase):
                 duplicate=root/'downloaded again.wav';duplicate.write_bytes(b'identical')
                 result=e.fast();self.assertEqual(result['moved'],0);self.assertEqual(result['duplicates'],1)
                 self.assertTrue(duplicate.exists())
-                self.assertTrue(any(row['status']=='重複，已略過' and row['original_path']==str(duplicate) for row in result['log_rows']))
+                self.assertTrue(any(row['status']=='重複，已略過' and Path(row['original_path']).resolve()==duplicate.resolve() for row in result['log_rows']))
             finally:e.close()
 
     def test_undo_restores_incremental_file_and_allows_explicit_rerun(self):
@@ -92,11 +92,11 @@ class IncrementalIntake(unittest.TestCase):
             try:result=e.fast()
             finally:e.close()
             txt=Path(result['log']['text']);csv_path=Path(result['log']['csv'])
-            self.assertEqual(txt.parent,root/LOG_ROOT);self.assertTrue(txt.is_file());self.assertTrue(csv_path.is_file())
+            self.assertEqual(txt.parent.resolve(),(root/LOG_ROOT).resolve());self.assertTrue(txt.is_file());self.assertTrue(csv_path.is_file())
             with csv_path.open(encoding='utf-8-sig',newline='') as f:rows=list(csv.DictReader(f))
-            self.assertEqual(len(rows),1);self.assertEqual(rows[0]['原始位置'],str(source));self.assertEqual(rows[0]['處理狀態'],'成功')
+            self.assertEqual(len(rows),1);self.assertEqual(Path(rows[0]['原始位置']).resolve(),source.resolve());self.assertEqual(rows[0]['處理狀態'],'成功')
             final=Path(rows[0]['最終完整路徑']);self.assertTrue(final.is_file());self.assertEqual(rows[0]['更名後檔名'],final.name)
-            text=txt.read_text('utf-8');self.assertIn(str(source),text);self.assertIn(str(final),text)
+            text=txt.read_text('utf-8');self.assertIn(rows[0]['原始位置'],text);self.assertIn(str(final),text)
 
     def test_missing_incremental_table_rebuilds_safely_from_protected_roots(self):
         with tempfile.TemporaryDirectory() as td:
