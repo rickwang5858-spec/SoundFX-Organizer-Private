@@ -3,7 +3,7 @@ name: macOS Final Validation
 on:
   workflow_dispatch:
   push:
-    branches: [main, m1-macos26-compat, incremental-intake-logs]
+    branches: [main, m1-macos26-compat]
 
 permissions:
   contents: read
