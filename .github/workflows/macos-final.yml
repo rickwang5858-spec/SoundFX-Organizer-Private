@@ -3,7 +3,7 @@ name: macOS Final Validation
 on:
   workflow_dispatch:
   push:
-    branches: [main, m1-macos26-compat]
+    branches: [main, m1-macos26-compat, incremental-intake-logs]
 
 permissions:
   contents: read
@@ -53,9 +53,9 @@ jobs:
       - name: Verify delivered ZIP
         env:
           EXPECTED_ARCH: arm64
-        run: bash scripts/verify_delivery.sh "dist/SoundFX_Organizer_5.0.2_M1_macOS26_arm64.zip"
+        run: bash scripts/verify_delivery.sh "dist/SoundFX_Organizer_5.0.3_M1_macOS26_arm64.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: SoundFX-Organizer-5.0.2-M1-macOS26-Final
-          path: dist/SoundFX_Organizer_5.0.2_M1_macOS26_arm64.zip
+          name: SoundFX-Organizer-5.0.3-M1-macOS26-Final
+          path: dist/SoundFX_Organizer_5.0.3_M1_macOS26_arm64.zip
           if-no-files-found: error

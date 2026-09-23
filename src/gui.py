@@ -9,7 +9,7 @@ from categories import SEMANTIC,convert
 class App:
     def __init__(self,root):
         self.root=root; root.geometry('1120x780'); root.minsize(980,700)
-        self.events=queue.Queue(); self.stop=threading.Event(); self.pause=threading.Event(); self.busy=False; self.pending=[]; self.entries=[]
+        self.events=queue.Queue(); self.stop=threading.Event(); self.pause=threading.Event(); self.busy=False; self.pending=[]; self.entries=[];self.latest_log=''
         self.base=Path.home()/'Library/Application Support/SoundFX4'; self.base.mkdir(parents=True,exist_ok=True)
         self.pref=self.base/'settings.json'
         try: saved=json.loads(self.pref.read_text())
@@ -46,10 +46,25 @@ class App:
         self.cancel=ttk.Button(controls,command=self.stop.set,state='disabled'); self.cancel.pack(side='left',padx=8)
         self.undo=ttk.Button(controls,command=lambda:self.start('undo')); self.undo.pack(side='right')
         self.purge=ttk.Button(controls,command=lambda:self.start('purge')); self.purge.pack(side='right',padx=8)
-        self.tree=ttk.Treeview(frame,columns=('file','suggestion','confidence','reason'),show='headings',height=12,selectmode='extended')
+        self.notebook=ttk.Notebook(frame);self.notebook.pack(fill='both',expand=True)
+        self.review_tab=ttk.Frame(self.notebook);self.results_tab=ttk.Frame(self.notebook)
+        self.notebook.add(self.review_tab);self.notebook.add(self.results_tab)
+        self.tree=ttk.Treeview(self.review_tab,columns=('file','suggestion','confidence','reason'),show='headings',height=12,selectmode='extended')
         self.tree.column('file',width=470);self.tree.column('suggestion',width=260);self.tree.column('confidence',width=75);self.tree.column('reason',width=230)
-        scroll=ttk.Scrollbar(frame,orient='vertical',command=self.tree.yview); self.tree.configure(yscrollcommand=scroll.set)
+        scroll=ttk.Scrollbar(self.review_tab,orient='vertical',command=self.tree.yview); self.tree.configure(yscrollcommand=scroll.set)
         scroll.pack(side='right',fill='y'); self.tree.pack(fill='both',expand=True); self.tree.bind('<Double-1>',self.reveal)
+        result_box=ttk.Frame(self.results_tab);result_box.pack(fill='both',expand=True)
+        result_columns=('original_name','original_path','category','renamed_name','final_path','status','reason')
+        self.results_tree=ttk.Treeview(result_box,columns=result_columns,show='headings',height=12)
+        for key,width in zip(result_columns,(170,300,210,210,340,105,260)):self.results_tree.column(key,width=width,stretch=True)
+        result_v=ttk.Scrollbar(result_box,orient='vertical',command=self.results_tree.yview)
+        result_h=ttk.Scrollbar(result_box,orient='horizontal',command=self.results_tree.xview)
+        self.results_tree.configure(yscrollcommand=result_v.set,xscrollcommand=result_h.set)
+        result_v.pack(side='right',fill='y');result_h.pack(side='bottom',fill='x');self.results_tree.pack(fill='both',expand=True)
+        self.results_tree.bind('<Double-1>',self.reveal_result)
+        log_bar=ttk.Frame(self.results_tab);log_bar.pack(fill='x',pady=(8,0))
+        self.open_log_button=ttk.Button(log_bar,command=self.open_latest_log,state='disabled');self.open_log_button.pack(side='left')
+        self.reveal_log_button=ttk.Button(log_bar,command=self.reveal_latest_log,state='disabled');self.reveal_log_button.pack(side='left',padx=8)
         review=ttk.Frame(frame);review.pack(fill='x',pady=(10,0))
         self.review_category=tk.StringVar();cats=sorted({convert(r[2]) for r in SEMANTIC})
         self.category_combo=ttk.Combobox(review,textvariable=self.review_category,values=cats,state='readonly',width=47);self.category_combo.pack(side='left')
@@ -74,6 +89,9 @@ class App:
         self.fast.config(text=self.t('fast_button'));self.ai.config(text=self.t('ai_button'));self.quality.config(text=self.t('quality_button'))
         self.pb.config(text=self.t('pause'));self.cancel.config(text=self.t('stop'));self.undo.config(text=self.t('undo'));self.purge.config(text=self.t('purge'))
         self.tree.heading('file',text=self.t('file_column'));self.tree.heading('suggestion',text=self.t('suggestion_column'));self.tree.heading('confidence',text=self.t('confidence_column'));self.tree.heading('reason',text=self.t('reason_column'))
+        self.notebook.tab(self.review_tab,text=self.t('review_tab'));self.notebook.tab(self.results_tab,text=self.t('results_tab'))
+        for key in ('original_name','original_path','category','renamed_name','final_path','status','reason'):self.results_tree.heading(key,text=self.t('result_'+key))
+        self.open_log_button.config(text=self.t('open_log'));self.reveal_log_button.config(text=self.t('reveal_log'))
         self.assign.config(text=self.t('assign'));self.play.config(text=self.t('play'));self.finder.config(text=self.t('finder'));self.export_rules.config(text=self.t('export_rules'));self.import_rules.config(text=self.t('import_rules'));self.manage_rules.config(text=self.t('manage_rules'));self.review_hint.config(text=self.t('review_hint'))
         self.diagnostics.config(text=self.t('diagnostics'))
         modes=[self.t('quiet'),self.t('fast_mode')];self.combo.config(values=modes);self.mode_display.set(modes[0] if self.mode.get()=='quiet' else modes[1])
@@ -100,6 +118,15 @@ class App:
                     if p.is_file():z.write(p,p.name)
             messagebox.showinfo(self.t('diagnostics'),self.t('diagnostics_saved'))
         except OSError as ex:messagebox.showerror(self.t('diagnostics'),str(ex))
+    def open_latest_log(self):
+        if self.latest_log and Path(self.latest_log).is_file():subprocess.Popen(['/usr/bin/open',self.latest_log])
+    def reveal_latest_log(self):
+        if self.latest_log and Path(self.latest_log).is_file():subprocess.Popen(['/usr/bin/open','-R',self.latest_log])
+    def reveal_result(self,event=None):
+        ids=self.results_tree.selection()
+        if not ids:return
+        values=self.results_tree.item(ids[0],'values');path=values[4] if len(values)>4 and Path(values[4]).exists() else values[1]
+        if path and Path(path).exists():subprocess.Popen(['/usr/bin/open','-R',path])
     def toggle(self):
         if self.pause.is_set(): self.pause.clear(); self.pb.config(text=self.t('pause'))
         else: self.pause.set(); self.pb.config(text=self.t('resume')); self.detail.set(self.t('pause'))
@@ -313,13 +340,23 @@ class App:
             elif kind=='done':
                 task,r=ev[1:]; self.pending=r['pending']; self.bar.stop(); self.bar.config(mode='determinate',value=100)
                 self.title.set(self.t('completed') if task=='fast' else '舊版歸檔修復完成' if task=='repair' else '本次工作完成')
-                msg=self.t('result_summary',moved=r['moved'],pending=len(self.pending),extras=len(r['extras']))
+                if task=='fast':
+                    found=r.get('new_audio_found',0)+r.get('new_attachment_found',0)
+                    new_pending=sum(1 for row in r.get('log_rows',[]) if row.get('status')=='待判斷')
+                    msg=(self.t('no_new_files') if found==0 and not r['extras'] else self.t('incremental_summary',found=found,success=r['moved']+r.get('attachments_moved',0),pending=new_pending,duplicates=r.get('duplicates',0),failed=r.get('failed',0)))
+                else:msg=self.t('result_summary',moved=r['moved'],pending=len(self.pending),extras=len(r['extras']))
                 total=r['moved']+len(self.pending)
-                if task=='fast' and total:msg+='\n'+self.t('rate_summary',classified=100*r['moved']/total,review=100*len(self.pending)/total)
+                if task=='fast' and r.get('new_audio_found',0):msg+='\n'+self.t('rate_summary',classified=100*r['moved']/max(1,r['new_audio_found']),review=100*new_pending/max(1,r['new_audio_found']))
                 if r.get('attachments_moved'):msg+='\n'+self.t('attachments_summary',count=r['attachments_moved'])
                 if task=='quality':msg=('找到 %d 個通過嚴格比對的低音質副本；已移至隔離區 %d 個。'%(r.get('quality_found',0),r['moved']))
                 if task=='purge':msg='已永久清除 %d 個隔離副本，釋放 %s。'%(r['moved'],self.human_bytes(r.get('purged_bytes',0)))
-                if r.get('skipped'):msg+='\n'+self.t('skipped_summary',count=r['skipped'])
+                if r.get('skipped') and task!='fast':msg+='\n'+self.t('skipped_summary',count=r['skipped'])
+                self.results_tree.delete(*self.results_tree.get_children())
+                for row in r.get('log_rows',[]):
+                    self.results_tree.insert('','end',values=tuple(row.get(k,'') for k in ('original_name','original_path','category','renamed_name','final_path','status','reason')))
+                log=r.get('log',{});self.latest_log=log.get('text','') if isinstance(log,dict) else ''
+                state='normal' if self.latest_log and Path(self.latest_log).is_file() else 'disabled';self.open_log_button.config(state=state);self.reveal_log_button.config(state=state)
+                if task in ('fast','ai'):self.notebook.select(self.results_tab)
                 self.desc.set(msg); self.tree.delete(*self.tree.get_children())
                 for p in self.pending: self.tree.insert('', 'end',values=(p,'',0,self.t('needs_review')))
                 for p,why in r.get('attachments',[]): self.tree.insert('', 'end',values=(p,'','',why))

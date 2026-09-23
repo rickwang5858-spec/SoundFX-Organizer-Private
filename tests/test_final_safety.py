@@ -39,8 +39,8 @@ class FinalSafety(unittest.TestCase):
         build=(Path(__file__).parents[1]/'scripts/build_macos.sh').read_text(encoding='utf-8')
         self.assertIn('Print :${key}',build)
         self.assertIn('Add :${key} string ${value}',build)
-        self.assertIn('set_plist_string CFBundleShortVersionString 5.0',build)
-        self.assertIn('set_plist_string CFBundleVersion 102',build)
+        self.assertIn('set_plist_string CFBundleShortVersionString 5.0.3',build)
+        self.assertIn('set_plist_string CFBundleVersion 103',build)
     def test_lipo_receives_file_before_verify_arch(self):
         root=Path(__file__).parents[1]
         build=(root/'scripts/build_macos.sh').read_text(encoding='utf-8')
@@ -76,6 +76,15 @@ class FinalSafety(unittest.TestCase):
                 self.assertEqual(len(backups),1);self.assertEqual(backups[0].read_bytes(),b'metadata')
                 self.assertFalse(side.exists())
             finally:e.close()
+
+    def test_gui_exposes_batch_results_and_log_actions(self):
+        root=Path(__file__).parents[1]
+        gui=(root/'src/gui.py').read_text(encoding='utf-8')
+        zh=(root/'src/locales/zh-Hant.json').read_text(encoding='utf-8')
+        for required in ('self.results_tree','open_latest_log','reveal_latest_log',"r.get('log_rows',[])"):
+            self.assertIn(required,gui)
+        for required in ('本次處理結果','原始位置','最終完整路徑','開啟本次 Log','在 Finder 顯示 Log'):
+            self.assertIn(required,zh)
 
     def test_missing_source_after_scan_is_reported_without_crash(self):
         with tempfile.TemporaryDirectory() as d:
