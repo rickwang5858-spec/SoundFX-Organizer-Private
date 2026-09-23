@@ -10,6 +10,7 @@ from taxonomy import render_category, aliases, TOP_ZH, STYLES, is_category_root,
 
 CONTROL='.soundfx_organizer'
 DOC_ROOT='Documentation & Licenses'
+LOG_ROOT='SoundFX Organizer Logs'
 DOC_EXTS={'.txt','.pdf','.rtf','.doc','.docx','.jpg','.jpeg','.png','.gif','.tif','.tiff','.webp','.html','.htm','.url','.webloc','.nfo','.md'}
 LINK_FALLBACK_ERRNOS={errno.EPERM,errno.EOPNOTSUPP,errno.EXDEV,errno.ENOSYS,45}
 if hasattr(errno,'ENOTSUP'):LINK_FALLBACK_ERRNOS.add(errno.ENOTSUP)
@@ -31,10 +32,17 @@ class Engine:
         self.lock=(self.ctl/'lock4').open('a')
         try:fcntl.flock(self.lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BaseException:self.lock.close();raise
-        self.db=sqlite3.connect(self.ctl/'state4.sqlite')
-        self.db.executescript('CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE IF NOT EXISTS seen(sig TEXT PRIMARY KEY,path TEXT); CREATE TABLE IF NOT EXISTS file_rules(sig TEXT PRIMARY KEY,rule_version INTEGER); CREATE TABLE IF NOT EXISTS audio(sig TEXT PRIMARY KEY,result TEXT); CREATE TABLE IF NOT EXISTS moves(id INTEGER PRIMARY KEY, batch TEXT,src TEXT,dst TEXT,sig TEXT,status TEXT); CREATE TABLE IF NOT EXISTS decisions(sig TEXT PRIMARY KEY,path TEXT,category TEXT,tags TEXT,evidence TEXT,confidence REAL,reason TEXT,rule_version INTEGER);')
+        try:
+            self.db=sqlite3.connect(self.ctl/'state4.sqlite')
+            self.db.executescript('CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE IF NOT EXISTS seen(sig TEXT PRIMARY KEY,path TEXT); CREATE TABLE IF NOT EXISTS file_rules(sig TEXT PRIMARY KEY,rule_version INTEGER); CREATE TABLE IF NOT EXISTS audio(sig TEXT PRIMARY KEY,result TEXT); CREATE TABLE IF NOT EXISTS moves(id INTEGER PRIMARY KEY, batch TEXT,src TEXT,dst TEXT,sig TEXT,status TEXT); CREATE TABLE IF NOT EXISTS decisions(sig TEXT PRIMARY KEY,path TEXT,category TEXT,tags TEXT,evidence TEXT,confidence REAL,reason TEXT,rule_version INTEGER); CREATE TABLE IF NOT EXISTS intake_files(file_key TEXT PRIMARY KEY,content_hash TEXT NOT NULL,stat_sig TEXT NOT NULL,original_path TEXT NOT NULL,current_path TEXT NOT NULL,status TEXT NOT NULL,batch TEXT,updated_at REAL NOT NULL,detail TEXT); CREATE INDEX IF NOT EXISTS intake_content_hash ON intake_files(content_hash);')
+        except sqlite3.DatabaseError as exc:
+            try:self.db.close()
+            except Exception:pass
+            self.lock.close()
+            raise RuntimeError('增量索引無法讀取，為避免重新搬動既有音效，已在變更任何檔案前安全停止。請匯出診斷資訊。') from exc
         self.device=self.root.stat().st_dev
         self.custom=CustomRules(self.ctl/'custom_rules.json')
+        self.intake={};self.duplicate_rows=[];self.known_pending=[];self.new_audio_found=0;self.new_attachment_found=0
         self._recover_incomplete_moves()
     def _relative(self,p):
         """Return a safe library-relative path across macOS path aliases.
@@ -97,7 +105,7 @@ class Engine:
             kept=[]
             for d in ds:
                 q=Path(base)/d
-                if d==CONTROL or d in aliases(DOC_ROOT) or d.endswith('.app'):continue
+                if d in (CONTROL,LOG_ROOT) or d in aliases(DOC_ROOT) or d.endswith('.app'):continue
                 if q.is_symlink():extras.append((str(q),'資料夾連結，保留原處'));continue
                 kept.append(d)
             ds[:]=kept
@@ -110,8 +118,73 @@ class Engine:
                 else: attachments.append(p)
             self.emit('scan',len(files))
         self.dirs=dirs; self.attachments=attachments; self.extras=extras; return files
+    def _protected_intake_root(self,name):
+        """Top-level destinations are immutable during normal incremental runs."""
+        return (name in (CONTROL,LOG_ROOT) or name.endswith('.app') or
+                is_category_root(name) or name in aliases(DOC_ROOT))
+    def scan_intake(self):
+        """Scan only root-level inbox material, never managed category trees."""
+        files=[];attachments=[];extras=[];dirs=[]
+        def onerror(e):extras.append((e.filename,'讀取失敗：'+str(e)))
+        for base,ds,fs in os.walk(self.root,onerror=onerror,followlinks=False):
+            self.checkpoint();base_path=Path(base);kept=[]
+            for d in ds:
+                q=base_path/d
+                protected=(base_path==self.root and self._protected_intake_root(d))
+                if protected or d in (CONTROL,LOG_ROOT) or d.endswith('.app'):continue
+                if q.is_symlink():extras.append((str(q),'資料夾連結，保留原處'));continue
+                kept.append(d)
+            ds[:]=kept;dirs.extend(base_path/d for d in ds)
+            for name in fs:
+                p=base_path/name
+                if system_file(name):self.system_skipped+=1;self.system_files.append(p);continue
+                if p.is_symlink():extras.append((str(p),'連結，保留原處'))
+                elif p.suffix.lower() in AUDIO and not name.startswith('._'):files.append(p)
+                else:attachments.append(p)
+            self.emit('scan',len(files))
+        self.dirs=dirs;self.attachments=attachments;self.extras=extras
+        return files
+    @staticmethod
+    def _intake_identity(p):
+        s=Path(p).stat()
+        return ('%d:%d'%(s.st_dev,s.st_ino),'%d:%d:%d'%(s.st_size,s.st_mtime_ns,s.st_ctime_ns))
+    def _remember_intake(self,meta,current,status,batch,detail=''):
+        current=Path(current);key,stat_sig=self._intake_identity(current)
+        values=(key,meta['hash'],stat_sig,meta['original'],str(current),status,batch,time.time(),detail)
+        self.db.execute('INSERT OR REPLACE INTO intake_files VALUES(?,?,?,?,?,?,?,?,?)',values)
+        if key!=meta['key']:
+            original_values=(meta['key'],meta['hash'],meta['stat'],meta['original'],str(current),status,batch,time.time(),detail)
+            self.db.execute('INSERT OR REPLACE INTO intake_files VALUES(?,?,?,?,?,?,?,?,?)',original_values)
+        self.db.commit()
+    @staticmethod
+    def _log_row(source,category='',renamed='',final='',status='',reason=''):
+        source=Path(source)
+        return {'original_name':source.name,'original_path':str(source),'category':str(category),
+                'renamed_name':str(renamed),'final_path':str(final),'status':str(status),'reason':str(reason)}
+    def _write_batch_log(self,batch,rows,started,kind='快速分類'):
+        finished=time.time();logs=self.root/LOG_ROOT;logs.mkdir(exist_ok=True)
+        stamp=time.strftime('%Y-%m-%d_%H-%M-%S',time.localtime(started));base=logs/('%s_%s'%(stamp,batch[:8]))
+        csv_path=base.with_suffix('.csv');txt_path=base.with_suffix('.txt')
+        headings=['原始檔名','原始位置','分類結果','更名後檔名','最終完整路徑','處理狀態','原因']
+        fields=['original_name','original_path','category','renamed_name','final_path','status','reason']
+        tmp_csv=csv_path.with_suffix('.csv.tmp');tmp_txt=txt_path.with_suffix('.txt.tmp')
+        with tmp_csv.open('w',encoding='utf-8-sig',newline='') as f:
+            w=csv.writer(f);w.writerow(headings);w.writerows([[row.get(k,'') for k in fields] for row in rows])
+        counts={}
+        for row in rows:counts[row.get('status','')]=counts.get(row.get('status',''),0)+1
+        lines=['SoundFX Organizer 本次處理紀錄','工作：'+kind,
+               '開始：'+time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(started)),
+               '完成：'+time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(finished)),
+               '摘要：'+('、'.join('%s %d'%(k,v) for k,v in counts.items() if k) or '沒有發現需要處理的新檔案'),'']
+        for i,row in enumerate(rows,1):
+            lines.extend(['[%d] %s'%(i,row.get('status','')),
+                          '原始：'+row.get('original_path',''),'分類：'+row.get('category',''),
+                          '新名：'+row.get('renamed_name',''),'最終：'+row.get('final_path',''),
+                          '說明：'+row.get('reason',''),''])
+        tmp_txt.write_text('\n'.join(lines),encoding='utf-8');os.replace(tmp_csv,csv_path);os.replace(tmp_txt,txt_path)
+        return {'text':str(txt_path),'csv':str(csv_path),'started':started,'finished':finished,'rows':rows,'counts':counts}
     def candidates(self):
-        files=self.scan()
+        files=self.scan_intake()
         if not self.db.execute("SELECT 1 FROM meta WHERE key='legacy_import'").fetchone():
             protected=set(); prefixes=set()
             p=self.ctl/'state3.json'
@@ -131,12 +204,26 @@ class Engine:
                     if not any(x in ('_待確認','_Needs Review','Unclassified') for x in self._relative(p).parts):
                         self.db.execute('INSERT OR REPLACE INTO seen VALUES(?,?)',(sig,str(p)))
             self.db.execute("INSERT INTO meta VALUES('legacy_import','1')"); self.db.commit()
-        current={r[0] for r in self.db.execute('SELECT sig FROM file_rules WHERE rule_version=?',(RULE_VERSION,))}; pending=[]; self.skipped=0
+        current={r[0] for r in self.db.execute('SELECT sig FROM file_rules WHERE rule_version=?',(RULE_VERSION,))};pending=[];self.skipped=len(current)
+        self.intake={};self.duplicate_rows=[];self.known_pending=[];self.new_audio_found=0
         for p in files:
             self.checkpoint()
             try:
-                if signature(p) not in current: pending.append(p)
-                else:self.skipped+=1
+                if signature(p) in current:continue
+                key,stat_sig=self._intake_identity(p);row=self.db.execute('SELECT content_hash,stat_sig,status,original_path FROM intake_files WHERE file_key=?',(key,)).fetchone()
+                if row and row[1]==stat_sig and row[2] in ('pending','duplicate','classified','attachment'):
+                    if row[2]=='pending':self.known_pending.append(str(p))
+                    continue
+                content_hash=digest(p)
+                if row and row[0]==content_hash and row[2]=='pending':
+                    meta={'key':key,'stat':stat_sig,'hash':content_hash,'original':row[3]};self._remember_intake(meta,p,'pending','',row[2]);self.known_pending.append(str(p));continue
+                duplicate=self.db.execute("SELECT current_path,status FROM intake_files WHERE content_hash=? AND status IN ('classified','attachment','duplicate') ORDER BY updated_at DESC LIMIT 1",(content_hash,)).fetchone()
+                meta={'key':key,'stat':stat_sig,'hash':content_hash,'original':str(p)}
+                if duplicate:
+                    reason='內容與已處理檔案相同：'+duplicate[0]
+                    self._remember_intake(meta,p,'duplicate','',reason);self.new_audio_found+=1
+                    self.duplicate_rows.append(self._log_row(p,final=p,status='重複，已略過',reason=reason));continue
+                self.intake[str(p)]=meta;pending.append(p);self.new_audio_found+=1
             except OSError as e: self.extras.append((str(p),str(e)))
         return pending
     def classify_fast(self,p,readme_text=''):
@@ -227,7 +314,7 @@ class Engine:
         if self.root not in dest.resolve().parents or dest.is_symlink(): raise ValueError('目的路徑不安全')
         if p==dest:
             if classified:self._mark_current(p);self._record_decision(p,result)
-            self.db.commit(); return
+            self.db.commit(); return p
         if dest.exists(): raise FileExistsError('預覽後目的地出現檔案，請重新預覽：'+str(dest))
         dest.parent.mkdir(parents=True,exist_ok=True)
         cur=self.db.execute('INSERT INTO moves(batch,src,dst,sig,status) VALUES(?,?,?,?,?)',(batch,str(p),str(dest),sig,'moving')); self.db.commit()
@@ -279,6 +366,7 @@ class Engine:
         if classified:
             self.db.execute('INSERT OR REPLACE INTO file_rules VALUES(?,?)',(signature(dest),RULE_VERSION));self._record_decision(dest,result)
         self.db.commit()
+        return dest
     def _safe_piece(self,value):
         value=re.sub(r'(?i)[ _.-]*20\d{2}(?:[ _.-]\d{2}){5}[ _.-]*utc$','',str(value))
         value=re.sub(r'[^A-Za-z0-9 _.-]+','_',value).strip(' ._-')
@@ -298,26 +386,57 @@ class Engine:
         if self.root not in dest.resolve().parents:raise ValueError('附件路徑不安全')
         return dest
     def fast(self):
-        self.migrate_category_roots()
-        files=self.candidates(); attachments=list(self.attachments); batch=uuid.uuid4().hex; rest=[]; moved=0; docs=0; doc_rows=[]; reserved=set()
+        started=time.time();self.migrate_category_roots()
+        files=self.candidates();attachments=list(self.attachments);batch=uuid.uuid4().hex;rest=list(self.known_pending);moved=0;docs=0;doc_rows=[];reserved=set();log_rows=list(self.duplicate_rows)
+        new_attachments=[]
+        for p in attachments:
+            try:
+                key,stat_sig=self._intake_identity(p);row=self.db.execute('SELECT content_hash,stat_sig,status,original_path FROM intake_files WHERE file_key=?',(key,)).fetchone()
+                if row and row[1]==stat_sig and row[2] in ('attachment','duplicate'):continue
+                content_hash=digest(p);duplicate=self.db.execute("SELECT current_path FROM intake_files WHERE content_hash=? AND status IN ('classified','attachment','duplicate') ORDER BY updated_at DESC LIMIT 1",(content_hash,)).fetchone()
+                meta={'key':key,'stat':stat_sig,'hash':content_hash,'original':str(p)}
+                if duplicate:
+                    reason='內容與已處理檔案相同：'+duplicate[0];self._remember_intake(meta,p,'duplicate','',reason);self.new_attachment_found+=1
+                    log_rows.append(self._log_row(p,final=p,status='重複，已略過',reason=reason));continue
+                self.intake[str(p)]=meta;new_attachments.append(p);self.new_attachment_found+=1
+            except OSError as e:self.extras.append((str(p),str(e)))
+        attachments=new_attachments
         classified=self.classify_batch(files,attachments)
         details=[]
         for i,row in enumerate(classified):
-            p=row['path'];self.checkpoint(); result=row['result']
-            if not p.exists():self.extras.append((str(p),'掃描後來源已不存在，未標示為成功'));continue
-            if result: self.move(p,result,batch); moved+=1
-            else: rest.append(str(p))
+            p=row['path'];original=str(p);self.checkpoint();result=row['result'];meta=self.intake.get(original)
+            if not p.exists():
+                reason='掃描後來源已不存在，未標示為成功';self.extras.append((original,reason));log_rows.append(self._log_row(original,status='失敗',reason=reason));continue
+            try:
+                if result:
+                    dest=self.move(p,result,batch);moved+=1
+                    if meta:self._remember_intake(meta,dest,'classified',batch,result.get('source',''))
+                    log_rows.append(self._log_row(original,render_category(result['cat'],self.folder_style),dest.name,dest,'成功',result.get('source','')))
+                else:
+                    rest.append(original)
+                    if meta:self._remember_intake(meta,p,'pending',batch,'快速分類無法確定')
+                    log_rows.append(self._log_row(original,final=original,status='待判斷',reason='快速分類無法確定；可使用音訊辨識'))
+            except Stopped:raise
+            except Exception as exc:
+                reason=str(exc);self.extras.append((original,reason));log_rows.append(self._log_row(original,final=original,status='失敗',reason=reason))
             details.append({'path':str(p),'result':result})
             self.emit('progress',i+1,len(files)+len(attachments),p.name)
         for j,p in enumerate(attachments):
-            self.checkpoint()
+            self.checkpoint();original=str(p);meta=self.intake.get(original)
             if system_file(p.name):continue
-            if not p.exists():self.extras.append((str(p),'掃描後附件已不存在，保留其他檔案'));continue
-            dest=self.attachment_destination(p,reserved); reserved.add(str(dest).casefold())
-            self.move(p,{'cat':'','label':''},batch,expected=dest,classified=False); docs+=1; doc_rows.append((str(dest),'附件已集中保存'))
+            if not p.exists():
+                reason='掃描後附件已不存在，保留其他檔案';self.extras.append((original,reason));log_rows.append(self._log_row(original,status='失敗',reason=reason));continue
+            try:
+                dest=self.attachment_destination(p,reserved);reserved.add(str(dest).casefold())
+                self.move(p,{'cat':'','label':''},batch,expected=dest,classified=False);docs+=1;doc_rows.append((str(dest),'附件已集中保存'))
+                if meta:self._remember_intake(meta,dest,'attachment',batch,'附件已集中保存')
+                log_rows.append(self._log_row(original,render_category(DOC_ROOT,self.folder_style),dest.name,dest,'成功','附件已集中保存'))
+            except Stopped:raise
+            except Exception as exc:
+                reason=str(exc);self.extras.append((original,reason));log_rows.append(self._log_row(original,final=original,status='失敗',reason=reason))
             self.emit('progress',len(files)+j+1,len(files)+len(attachments),p.name)
-        self.cleanup(); self.export()
-        return {'moved':moved,'attachments_moved':docs,'attachments':doc_rows,'pending':rest,'details':details,'extras':self.extras,'skipped':self.skipped,'system_skipped':self.system_skipped,'rule_version':RULE_VERSION}
+        self.cleanup();self.export();log=self._write_batch_log(batch,log_rows,started)
+        return {'moved':moved,'attachments_moved':docs,'attachments':doc_rows,'pending':rest,'details':details,'extras':self.extras,'skipped':self.skipped,'system_skipped':self.system_skipped,'rule_version':RULE_VERSION,'log':log,'log_rows':log_rows,'new_audio_found':self.new_audio_found,'new_attachment_found':self.new_attachment_found,'duplicates':sum(1 for r in log_rows if r['status'].startswith('重複')),'failed':sum(1 for r in log_rows if r['status']=='失敗')}
 
     def migrate_category_roots(self):
         """Migrate only files proven to have been placed by this app."""
@@ -354,22 +473,30 @@ class Engine:
             if phrase:added.append(self.custom.add(phrase,category,scope='filename'))
         return added
     def listen(self,paths,analyzer):
-        batch=uuid.uuid4().hex; moved=0; rest=[]
+        started=time.time();batch=uuid.uuid4().hex;moved=0;rest=[];log_rows=[]
         for i,name in enumerate(paths):
             self.checkpoint(); p=Path(name)
-            if not p.exists(): rest.append(name); continue
+            if not p.exists():
+                rest.append(name);log_rows.append(self._log_row(name,status='失敗',reason='音訊辨識前來源已不存在'));continue
             sig=signature(p); row=self.db.execute('SELECT result FROM audio WHERE sig=?',(sig,)).fetchone()
             try:
                 result=json.loads(row[0]) if row else analyzer(p)
                 if not row: self.db.execute('INSERT OR REPLACE INTO audio VALUES(?,?)',(sig,json.dumps(result))); self.db.commit()
             except Stopped: raise
             except Exception as e:
-                self.extras.append((str(p),'音訊辨識失敗：'+str(e))); rest.append(name); continue
-            if result.get('accepted'): self.move(p,audio_category(result),batch); moved+=1
-            else: rest.append(name)
+                reason='音訊辨識失敗：'+str(e);self.extras.append((str(p),reason));rest.append(name);log_rows.append(self._log_row(name,final=name,status='失敗',reason=reason));continue
+            if result.get('accepted'):
+                original=str(p);classified=audio_category(result);dest=self.move(p,classified,batch);moved+=1
+                key,stat_sig=self._intake_identity(dest);known=self.db.execute('SELECT content_hash,original_path FROM intake_files WHERE current_path=? ORDER BY updated_at DESC LIMIT 1',(original,)).fetchone()
+                meta={'key':key,'stat':stat_sig,'hash':known[0] if known else digest(dest),'original':known[1] if known else original}
+                self.db.execute("UPDATE intake_files SET current_path=?,status='classified',batch=?,updated_at=?,detail=? WHERE current_path=?",(str(dest),batch,time.time(),'音訊辨識',original))
+                self._remember_intake(meta,dest,'classified',batch,result.get('source','音訊辨識'))
+                log_rows.append(self._log_row(meta['original'],render_category(classified['cat'],self.folder_style),dest.name,dest,'成功','音訊辨識'))
+            else:
+                rest.append(name);log_rows.append(self._log_row(name,final=name,status='略過',reason='音訊辨識未達接受門檻'))
             self.emit('progress',i+1,len(paths),p.name)
-        self.cleanup(); self.export()
-        return {'moved':moved,'pending':rest,'extras':self.extras}
+        self.cleanup();self.export();log=self._write_batch_log(batch,log_rows,started,'音訊辨識')
+        return {'moved':moved,'pending':rest,'extras':self.extras,'log':log,'log_rows':log_rows,'new_audio_found':len(paths),'new_attachment_found':0,'duplicates':0,'failed':sum(1 for r in log_rows if r['status']=='失敗')}
     def cleanup(self):
         for p in sorted(getattr(self,'dirs',[]),key=lambda x:len(x.parts),reverse=True):
             try: p.rmdir()
@@ -455,7 +582,7 @@ class Engine:
         self.db.commit(); self.cleanup(); self.export()
         return {'moved':len(rows),'pending':pending,'extras':self.extras}
     def export(self):
-        (self.ctl/'diagnostics.json').write_text(json.dumps({'version':'5.0','folder_style':self.folder_style,'system_files_excluded':self.system_skipped,'issues':getattr(self,'extras',[]),'journal':self.db.execute('SELECT status,count(*) FROM moves GROUP BY status').fetchall()},ensure_ascii=False,indent=2),encoding='utf-8')
+        (self.ctl/'diagnostics.json').write_text(json.dumps({'version':'5.0.3','folder_style':self.folder_style,'system_files_excluded':self.system_skipped,'issues':getattr(self,'extras',[]),'journal':self.db.execute('SELECT status,count(*) FROM moves GROUP BY status').fetchall()},ensure_ascii=False,indent=2),encoding='utf-8')
         with (self.ctl/'原名新名對照.csv').open('w',encoding='utf-8-sig',newline='') as f:
             w=csv.writer(f); w.writerow(['批次','原路徑','新路徑','狀態']); w.writerows(self.db.execute('SELECT batch,src,dst,status FROM moves ORDER BY id'))
         with (self.ctl/'分類判斷紀錄.csv').open('w',encoding='utf-8-sig',newline='') as f:
@@ -464,7 +591,7 @@ class Engine:
     def undo(self):
         row=self.db.execute("SELECT batch FROM moves WHERE status IN ('done','moving') ORDER BY id DESC LIMIT 1").fetchone()
         if not row: return 0
-        rows=self.db.execute("SELECT id,src,dst,sig,status FROM moves WHERE batch=? AND status IN ('done','moving') ORDER BY id DESC",row).fetchall()
+        batch=row[0];rows=self.db.execute("SELECT id,src,dst,sig,status FROM moves WHERE batch=? AND status IN ('done','moving') ORDER BY id DESC",row).fetchall()
         for i,(id,src,dst,sig,status) in enumerate(rows):
             self.checkpoint(); a=Path(src); b=Path(dst)
             if a.exists():
@@ -492,4 +619,7 @@ class Engine:
             self.db.execute('DELETE FROM decisions WHERE sig=?',(sig,))
             self.db.execute("UPDATE moves SET status='restored' WHERE id=?",(id,)); self.db.commit()
             self.emit('progress',i+1,len(rows),a.name)
+        # A restored source is inbox material again and must be eligible for a
+        # future explicit run.  Remove only the exact batch's incremental rows.
+        self.db.execute('DELETE FROM intake_files WHERE batch=?',(batch,));self.db.commit()
         self.export(); return len(rows)

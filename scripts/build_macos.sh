@@ -22,8 +22,8 @@ set_plist_string() {
     /usr/libexec/PlistBuddy -c "Add :${key} string ${value}" "$APP/Contents/Info.plist"
   fi
 }
-set_plist_string CFBundleShortVersionString 5.0.2
-set_plist_string CFBundleVersion 102
+set_plist_string CFBundleShortVersionString 5.0.3
+set_plist_string CFBundleVersion 103
 set_plist_string CFBundleDisplayName "SoundFX Organizer"
 /usr/libexec/PlistBuddy -c "Delete :LSUIElement" "$APP/Contents/Info.plist" >/dev/null 2>&1 || true
 /usr/libexec/PlistBuddy -c "Add :LSUIElement bool false" "$APP/Contents/Info.plist"
@@ -36,7 +36,7 @@ BIN="$APP/Contents/MacOS/SoundFX Organizer"
 /usr/bin/lipo "$APP/Contents/Resources/ai_worker/ai_worker" -verify_arch "$ARCH"
 /usr/bin/codesign --force --deep --sign - "$APP"
 /usr/bin/codesign --verify --deep --strict "$APP"
-ARCHIVE="dist/SoundFX_Organizer_5.0.2_M1_macOS26_${ARCH}.zip"
+ARCHIVE="dist/SoundFX_Organizer_5.0.3_M1_macOS26_${ARCH}.zip"
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARCHIVE"
 archive_has_project_sources() {
   /usr/bin/zipinfo -1 "$1" | /usr/bin/awk '
